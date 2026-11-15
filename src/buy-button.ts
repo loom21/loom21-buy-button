@@ -27,6 +27,7 @@ export class Loom21BuyButton extends HTMLElement implements ModalHost {
   #error: ApiError | null = null;
   #modal: Modal | null = null;
   #loads = 0;
+  #retry: ReturnType<typeof setTimeout> | undefined;
   api!: StorefrontApi;
   store!: Store;
   product!: Product;
@@ -45,6 +46,8 @@ export class Loom21BuyButton extends HTMLElement implements ModalHost {
   }
 
   disconnectedCallback(): void {
+    this.#loads++; // a load or retry still under way is dropped
+    clearTimeout(this.#retry);
     this.#modal?.destroy();
     this.#modal = null;
   }
@@ -83,8 +86,13 @@ export class Loom21BuyButton extends HTMLElement implements ModalHost {
     this.#button.focus();
   }
 
-  async #load(): Promise<void> {
+  /**
+   * Loads the store and the product. When the API can't be reached or is busy (429, 5xx) it tries again by itself, three
+   * times (after 1, 2 and 4 seconds, or the answer's Retry-After), before the button says it couldn't load.
+   */
+  async #load(attempt = 0): Promise<void> {
     const load = ++this.#loads;
+    clearTimeout(this.#retry);
     this.#modal?.destroy();
     this.#modal = null;
     this.#state = 'loading';
@@ -106,16 +114,19 @@ export class Loom21BuyButton extends HTMLElement implements ModalHost {
     } catch (err) {
       if (load !== this.#loads) return;
       const error = err as ApiError;
+      const again = attempt < 3 && (error.code === 'network' || error.status === 429 || error.status >= 500);
+      if (again) this.#retry = setTimeout(() => void this.#load(attempt + 1), Math.min(error.retryAfter ?? 2 ** attempt, 30) * 1000);
+      if (attempt) return again ? undefined : this.#fail(error);
       const hint = developerHint(error, location.origin, product)
         ?? (error.code === 'network' ? `Loom21: couldn't reach ${this.api.base}. If the page is online, check that ${location.origin} is in Allowed websites in Settings → Storefronts → Developer.` : null);
       if (hint) console.error(hint);
-      return this.#fail(error);
+      return again ? undefined : this.#fail(error);
     }
 
     this.#state = 'ready';
     this.#modal = new Modal(this, this.#wrap);
     this.#render();
-    const saved = loadCheckout(product);
+    const saved = loadCheckout(this.api, product);
     if (saved) void this.#modal.resume(saved);
   }
 

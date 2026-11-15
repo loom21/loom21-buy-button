@@ -90,6 +90,13 @@ Parts: `button` (the Buy button) and `modal` (the checkout dialog).
    - **Card**: Loom21's pay page in a new tab, while this window waits.
 4. The button checks every 2 seconds (paused while the tab is hidden) and shows the order number once paid. A reload during payment comes back to the payment step.
 
+When things go wrong:
+
+- **The shop can't be reached on page load** (offline, a 429 or a server error): the button tries again by itself after 1, 2 and 4 seconds, then says it couldn't load.
+- **A Lightning invoice runs out before the order does:** the buyer chooses how to pay again and gets a new invoice for the same order.
+- **Too many status checks (429):** the next check waits for the answer's `Retry-After`.
+- **Addresses from the API** (the pay page, the receipt) become links only when they are `http(s)`.
+
 Closing the checkout while a payment is open asks whether to cancel the order (which releases the stock) or keep it.
 
 ## Self-hosting the script
@@ -125,6 +132,12 @@ npm test            # unit tests (vitest)
 npx playwright install chromium
 npm run test:e2e    # end-to-end tests against the mock API
 npm run build       # dist/, fails over 15 KB gzipped
+```
+
+To try a real Loom21 account (a local one too), run `npm run demo` and open `demo/real.html` with the key, the product and the API in the address. Payments there are real, and `http://localhost:5173` must be in the storefront's Allowed websites:
+
+```
+http://localhost:5173/demo/real.html?key=l21_pk_live_…&product=raw-honey-500g&api=https://localhost:7284/storefront/v1
 ```
 
 The QR code encoder is our own (`src/qr.ts`), to stay within the size budget. Its tests decode every version with an independent reader (jsQR).

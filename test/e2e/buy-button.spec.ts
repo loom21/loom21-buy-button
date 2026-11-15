@@ -154,6 +154,56 @@ test('origin_not_allowed: a buyer message, and the console names the origin to a
   expect(errors).toContain(`Loom21: add ${new URL(baseURL!).origin} to Allowed websites in Settings → Storefronts → Developer.`);
 });
 
+test('a first load that fails is tried again by itself', async ({ page }) => {
+  const api = await setup(page, { failFirst: 2 }); // GET /store and GET /products/… both answer 503 once
+  await expect(page.getByRole('button', { name: 'Buy now' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Buy now' })).toBeEnabled();
+  expect(requests(api, 'GET', '/store')).toHaveLength(2);
+});
+
+test('a Lightning invoice that runs out before its checkout: choose how to pay again', async ({ page }) => {
+  const api = await setup(page, { ...noShipping, paymentSeconds: 2 });
+  await page.getByRole('button', { name: 'Buy now' }).click();
+  await fillForm(page);
+  await dialog(page).getByRole('button', { name: /^Pay/ }).click();
+  await expect(dialog(page).getByRole('img', { name: 'Lightning invoice QR code' })).toBeVisible();
+
+  await expect(dialog(page).getByRole('button', { name: 'Pay with Lightning' })).toBeVisible();
+  await expect(dialog(page).getByRole('img', { name: 'Lightning invoice QR code' })).toHaveCount(0);
+  await expect(dialog(page).getByText(/Expires in 14:\d\d/)).toBeVisible(); // the checkout's own time
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem(sessionStorage.key(0)!)!).payment)).toBeUndefined();
+
+  await dialog(page).getByRole('button', { name: 'Pay with Lightning' }).click();
+  await expect(dialog(page).getByRole('img', { name: 'Lightning invoice QR code' })).toBeVisible();
+  expect(requests(api, 'POST', '/checkouts')).toHaveLength(1); // the same checkout, a new invoice
+  expect(requests(api, 'POST', /\/payments$/)).toHaveLength(2);
+});
+
+test('a 429 on the status poll: the next poll waits for Retry-After', async ({ page }) => {
+  const api = await setup(page, { ...noShipping, rateLimitPolls: 1 });
+  await page.getByRole('button', { name: 'Buy now' }).click();
+  await fillForm(page);
+  await dialog(page).getByRole('button', { name: /^Pay/ }).click();
+  const polls = () => requests(api, 'GET', /^\/checkouts\//).length;
+  await expect.poll(polls).toBe(1);
+  await page.waitForTimeout(4000); // Retry-After: 5, where the usual wait is 2 seconds
+  expect(polls()).toBe(1);
+  await expect.poll(polls, { timeout: 4000 }).toBeGreaterThan(1);
+});
+
+test('only http(s) addresses from the API become links', async ({ page }) => {
+  await page.addInitScript(() => (window.open = () => null));
+  await setup(page, { ...noShipping, hostedUrl: 'javascript:alert(1)', receiptUrl: 'javascript:alert(2)', payAfterPolls: 2 });
+  await page.getByRole('button', { name: 'Buy now' }).click();
+  await fillForm(page);
+  await dialog(page).getByLabel('Card').check();
+  await dialog(page).getByRole('button', { name: /^Pay/ }).click();
+  await expect(dialog(page).getByText('Waiting for payment…')).toBeVisible();
+  expect(await dialog(page).locator('a[href^="javascript"]').count()).toBe(0);
+  await expect(dialog(page).getByText('Payment received. Order 0000000042.')).toBeVisible();
+  await expect(dialog(page).getByRole('link', { name: /receipt/i })).toHaveCount(0);
+});
+
 test('a reload during payment reopens the modal on the payment step', async ({ page }) => {
   await setup(page, noShipping);
   await page.getByRole('button', { name: 'Buy now' }).click();

@@ -8,12 +8,17 @@ export const MOCK_KEY = 'l21_pk_test_demo';
  *   checkoutAvailable?: boolean, showPoweredBy?: boolean, paymentMethods?: string[], shippingMethods?: object[],
  *   bitcoinOnly?: boolean, hidePrices?: boolean, maxQuantity?: number,
  *   insufficientStockOnce?: number, error?: [number, string], payAfterPolls?: number, expireAfterPolls?: number,
- *   noBolt11?: boolean,
+ *   noBolt11?: boolean, failFirst?: number, paymentSeconds?: number, rateLimitPolls?: number,
+ *   hostedUrl?: string, receiptUrl?: string,
  * }} options
+ *
+ * failFirst: that many requests are answered 503 first. paymentSeconds: how long a payment (invoice) lives, 15 minutes
+ * when not set. rateLimitPolls: that many status polls are answered 429 with Retry-After: 5. hostedUrl / receiptUrl:
+ * given instead of the demo pages' addresses.
  */
 export function createMockApi(options = {}) {
   const o = { payAfterPolls: Infinity, expireAfterPolls: Infinity, ...options };
-  const state = { requests: [], checkouts: new Map(), idempotency: new Map(), stockErrorSent: false, next: 1 };
+  const state = { requests: [], checkouts: new Map(), idempotency: new Map(), stockErrorSent: false, next: 1, failed: 0, limited: 0 };
 
   const store = {
     name: 'Honey & Co',
@@ -77,7 +82,7 @@ export function createMockApi(options = {}) {
     return {
       status: c.status, orderNumber: c.status === 'paid' ? '0000000042' : null, expiresAt: c.expiresAt,
       paidAt: c.status === 'paid' ? new Date().toISOString() : null, method: c.method ?? null, total: c.total, currency: 'EUR',
-      buyerEmail: c.email.replace(/^(.).*(@.*)$/, '$1***$2'), receiptUrl: c.status === 'paid' ? '/demo/receipt.html' : null,
+      buyerEmail: c.email.replace(/^(.).*(@.*)$/, '$1***$2'), receiptUrl: c.status === 'paid' ? o.receiptUrl ?? '/demo/receipt.html' : null,
       hostedPaymentUrl: c.hosted ?? null,
     };
   }
@@ -87,6 +92,7 @@ export function createMockApi(options = {}) {
     path = path.replace(/^.*?\/storefront\/v1/, '').split('?')[0];
     state.requests.push({ method, path, headers, body });
     if (o.error) return problem(o.error[0], o.error[1]);
+    if (state.failed < (o.failFirst ?? 0)) return state.failed++, problem(503, 'unknown');
     if (headers['loom21-publishable-key'] !== MOCK_KEY) return problem(401, 'invalid_key');
 
     if (method === 'GET' && path === '/store') return json(200, store, { 'Cache-Control': 'public, max-age=60' });
@@ -131,8 +137,8 @@ export function createMockApi(options = {}) {
       if (!store.paymentMethods.includes(body.method)) return problem(409, 'payment_method_unavailable');
       c.method = body.method;
       const sats = Math.floor(c.total * SATS_PER_EUR);
-      const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-      const hosted = `/demo/hosted-pay.html?checkout=${c.checkoutToken}`;
+      const expiresAt = new Date(Date.now() + (o.paymentSeconds ?? 15 * 60) * 1000).toISOString();
+      const hosted = o.hostedUrl ?? `/demo/hosted-pay.html?checkout=${c.checkoutToken}`;
       c.hosted = hosted;
       const payment = { paymentId: `pay_${c.payments}`, method: body.method, processor: 'mock', amountSats: null, bolt11: null, onchainAddress: null, bip21: null, expiresAt, hostedPaymentUrl: hosted };
       if (body.method === 'lightning' && !o.noBolt11)
@@ -149,6 +155,12 @@ export function createMockApi(options = {}) {
       return json(200, statusOf(c));
     }
     if (m && method === 'GET' && !m[2]) {
+      if (state.limited < (o.rateLimitPolls ?? 0)) {
+        state.limited++;
+        const limited = problem(429, 'rate_limited');
+        limited.headers['Retry-After'] = '5';
+        return limited;
+      }
       if (c.status === 'awaiting_payment' && c.method) {
         c.polls++;
         if (c.polls >= o.payAfterPolls) c.status = 'paid';

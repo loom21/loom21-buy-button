@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loom21 Buy button: your own storefront</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px 64px; background: #faf9fb; color: #1c1b1f; }
+    main { max-width: 720px; margin: 0 auto; display: grid; gap: 16px; }
+    h1 { font-size: 24px; margin: 0; }
+    .card { background: #fff; border: 1px solid #e3e0e8; border-radius: 12px; padding: 16px; display: grid; gap: 8px; justify-items: start; }
+    form { display: grid; gap: 8px; }
+    label { display: grid; font-size: 13px; }
+    input { font: inherit; padding: 6px 8px; }
+    code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+    pre { background: #1d1b20; color: #e8e3ec; padding: 12px; border-radius: 8px; overflow: auto; margin: 0; }
+    #log { max-height: 220px; }
+    p { margin: 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Buy button against a real Loom21 account</h1>
+  <p>Payments here are real. Add this page's origin (<code id="origin"></code>) to Allowed websites in
+    Settings → Storefronts → Developer first. The address keeps the values, so a reload or a bookmark comes back to the
+    same button:<br><code>real.html?key=l21_pk_…&amp;product=slug&amp;api=https://localhost:7284/storefront/v1</code></p>
+
+  <form id="setup" class="card">
+    <label>Publishable key <input name="key" placeholder="l21_pk_live_…" required></label>
+    <label>Product slug or id <input name="product" required></label>
+    <label>API base <input name="api" placeholder="https://app.loom21.com/storefront/v1 when empty"></label>
+    <label>Other attributes (optional) <input name="attrs" placeholder='locale="bg" theme="dark" price-display="sats"'></label>
+    <button>Show the button</button>
+  </form>
+
+  <div id="out" class="card" hidden></div>
+  <pre id="snippet" hidden></pre>
+
+  <h2 style="font-size:16px;margin:8px 0 0">Events</h2>
+  <pre id="log">Open a checkout to see loom21:* events here.</pre>
+</main>
+
+<script src="/dist/buy-button.js" defer></script>
+<script>
+  document.getElementById('origin').textContent = location.origin;
+  const form = document.getElementById('setup');
+  const params = new URLSearchParams(location.search);
+  for (const name of ['key', 'product', 'api', 'attrs']) form.elements[name].value = params.get(name) ?? '';
+
+  // The publishable key is public (it is in every page that has the button), so it can be in the address.
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const next = new URLSearchParams();
+    for (const [name, value] of new FormData(form)) if (value.trim()) next.set(name, value.trim());
+    location.search = next.toString();
+  });
+
+  if (params.get('key') && params.get('product')) {
+    const button = document.createElement('loom21-buy-button');
+    // name="value" pairs only, set one by one: the address is never written into the page as HTML.
+    for (const [, name, value] of (params.get('attrs') ?? '').matchAll(/([a-z][a-z-]*)="([^"]*)"/g))
+      if (!name.startsWith('on')) button.setAttribute(name, value);
+    button.setAttribute('key', params.get('key'));
+    button.setAttribute('product', params.get('product'));
+    if (params.get('api')) button.setAttribute('api-base', params.get('api'));
+    const out = document.getElementById('out');
+    out.hidden = false;
+    out.append(button);
+    const snippet = document.getElementById('snippet');
+    snippet.hidden = false;
+    snippet.textContent = button.outerHTML;
+  }
+
+  const log = document.getElementById('log');
+  for (const name of ['loom21:open', 'loom21:checkout-created', 'loom21:paid', 'loom21:expired', 'loom21:closed'])
+    document.addEventListener(name, e => {
+      if (log.textContent.startsWith('Open')) log.textContent = '';
+      log.textContent = `${new Date().toLocaleTimeString()}  ${name}  ${JSON.stringify(e.detail)}\n` + log.textContent;
+    });
+</script>
+</body>
+</html>

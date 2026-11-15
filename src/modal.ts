@@ -24,6 +24,15 @@ export interface ModalHost {
 
 type View = 'form' | 'pay' | 'paid' | 'expired' | 'confirm';
 
+/** An address from the API for a link: http(s) only (never javascript: or data:), else none. */
+const web = (url?: string | null): string => {
+  try {
+    return /^https?:$/.test(new URL(url || '', location.href).protocol) ? url || '' : '';
+  } catch {
+    return '';
+  }
+};
+
 const COUNTRIES = 'AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK GB CH NO IS LI RS MK AL ME BA MD UA TR US CA AU'.split(' ');
 
 /** The checkout dialog: form → payment → paid or expired, plus "Cancel this order?" when closed while paying. */
@@ -92,16 +101,15 @@ export class Modal {
     try {
       status = await this.h.api.status(saved.token);
     } catch (err) {
-      if ((err as ApiError).code !== 'network') clearCheckout(this.h.productKey);
+      if ((err as ApiError).code !== 'network') this.#clear();
       return;
     }
     if (status.status === 'awaiting_payment') {
       this.#checkout = saved;
-      const live = saved.payment?.expiresAt && Date.parse(saved.payment.expiresAt) > Date.now();
-      this.#payment = live ? saved.payment! : null;
-      this.#show('pay');
+      this.#payment = saved.payment ?? null;
+      this.#show('pay'); // an invoice that ran out meanwhile becomes the choice of a method there
     } else {
-      clearCheckout(this.h.productKey);
+      this.#clear();
       if (status.status === 'paid') this.#onPaid(status);
     }
   }
@@ -122,6 +130,10 @@ export class Modal {
   }
 
   #t = (key: TextKey, params?: Record<string, string | number>) => t(this.h.locale, key, params);
+
+  #clear(): void {
+    clearCheckout(this.h.api, this.h.productKey);
+  }
 
   #close(): void {
     this.#d.close();
@@ -172,7 +184,7 @@ export class Modal {
       case 'pay': return this.#payHtml();
       case 'paid': {
         const s = this.#paid!;
-        return `<p class="ok" style="font-size:18px">✓ ${this.#t('paidTitle')}</p><p>${e(this.#t('paid', { order: s.orderNumber ?? '' }))}</p>${s.buyerEmail ? `<p class="sub">${e(this.#t('receiptTo', { email: s.buyerEmail }))}</p>` : ''}<div class="acts" style="width:100%">${s.receiptUrl ? `<a class="btn sec full" href="${e(s.receiptUrl)}" target="_blank" rel="noopener">${this.#t('receipt')}</a>` : ''}<button type="button" class="btn full" data-a="close">${this.#t('done')}</button></div>`;
+        return `<p class="ok" style="font-size:18px">✓ ${this.#t('paidTitle')}</p><p>${e(this.#t('paid', { order: s.orderNumber ?? '' }))}</p>${s.buyerEmail ? `<p class="sub">${e(this.#t('receiptTo', { email: s.buyerEmail }))}</p>` : ''}<div class="acts" style="width:100%">${web(s.receiptUrl) ? `<a class="btn sec full" href="${e(s.receiptUrl!)}" target="_blank" rel="noopener">${this.#t('receipt')}</a>` : ''}<button type="button" class="btn full" data-a="close">${this.#t('done')}</button></div>`;
       }
       case 'expired':
         return `<p style="font-weight:600">${this.#t('expiredTitle')}</p><p class="sub">${this.#t('checkout_expired')}</p><button type="button" class="btn full" data-a="again">${this.#t('startAgain')}</button>`;
@@ -314,13 +326,14 @@ export class Modal {
       const payment = await this.h.api.pay(this.#checkout!.token, method);
       this.#payment = payment;
       this.#method = method;
-      saveCheckout(this.h.productKey, { ...this.#checkout!, payment });
       this.#checkout!.payment = payment;
+      saveCheckout(this.h.api, this.h.productKey, this.#checkout!);
       const hosted = method === 'card' || (method === 'lightning' && !payment.bolt11) || (method === 'onchain' && !payment.onchainAddress);
       this.#blockedUrl = null;
-      if (hosted && payment.hostedPaymentUrl) {
-        if (popup) popup.location.href = payment.hostedPaymentUrl;
-        else this.#blockedUrl = payment.hostedPaymentUrl;
+      const url = web(payment.hostedPaymentUrl);
+      if (hosted && url) {
+        if (popup) popup.location.href = url;
+        else this.#blockedUrl = url;
       } else popup?.close();
       this.#show('pay');
     } catch (err) {
@@ -355,7 +368,7 @@ export class Modal {
     }
     this.#idemKey = null;
     this.#checkout = { token: checkout.checkoutToken, expiresAt: checkout.expiresAt, total: checkout.total, currency: checkout.currency };
-    saveCheckout(this.h.productKey, this.#checkout);
+    saveCheckout(this.h.api, this.h.productKey, this.#checkout);
     this.h.emit('loom21:checkout-created', { orderNumber: checkout.orderNumber, total: checkout.total, currency: checkout.currency });
   }
 
@@ -386,7 +399,7 @@ export class Modal {
     for (const field of Object.keys(err.problem?.errors ?? {})) {
       const last = field.split('.').pop()!.replace(/\[\d+\]/, '').toLowerCase();
       const name = ({ quantity: 'qty', shippingmethodid: 'ship', shippingaddress: 'line1' } as Record<string, string>)[last] ?? last;
-      this.#d.querySelector(`[name=${name}]`)?.setAttribute('aria-invalid', 'true');
+      if (/^\w+$/.test(name)) this.#d.querySelector(`[name=${name}]`)?.setAttribute('aria-invalid', 'true');
     }
   }
 
@@ -404,10 +417,11 @@ export class Modal {
     }
     if (p.method === 'onchain' && p.onchainAddress) {
       const amount = p.amountSats ? formatSats(p.amountSats, locale) : '';
-      return `<div class="qrb cen"><p class="sub">${e(this.#t('scanOnchain', { amount }))}</p><div class="qr">${qrSvg(p.bip21 || p.onchainAddress, this.#t('qrOnchain'))}</div><p class="mono">${e(p.onchainAddress)}</p></div><div class="acts" style="width:100%"><a class="btn full" href="${e(p.bip21 || 'bitcoin:' + p.onchainAddress)}">${this.#t('openWallet')}</a><button type="button" class="btn sec full" data-a="copy" data-v="${e(p.onchainAddress)}">${this.#t('copyAddress')}</button></div>${countdown}${other}`;
+      const uri = /^bitcoin:/i.test(p.bip21 ?? '') ? p.bip21! : 'bitcoin:' + p.onchainAddress;
+      return `<div class="qrb cen"><p class="sub">${e(this.#t('scanOnchain', { amount }))}</p><div class="qr">${qrSvg(uri, this.#t('qrOnchain'))}</div><p class="mono">${e(p.onchainAddress)}</p></div><div class="acts" style="width:100%"><a class="btn full" href="${e(uri)}">${this.#t('openWallet')}</a><button type="button" class="btn sec full" data-a="copy" data-v="${e(p.onchainAddress)}">${this.#t('copyAddress')}</button></div>${countdown}${other}`;
     }
     // Card, or a processor that gave only its pay page: the page is in another tab, we poll here.
-    const url = p.hostedPaymentUrl ?? '';
+    const url = web(p.hostedPaymentUrl);
     return `<p>${this.#blockedUrl ? '' : this.#t('newTab')}</p><a class="btn${this.#blockedUrl ? '' : ' sec'} full" href="${e(url)}" target="_blank" rel="noopener">${this.#t('openPage')}</a>${countdown}${other}`;
   }
 
@@ -452,7 +466,7 @@ export class Modal {
     this.#checkout = null;
     this.#payment = null;
     this.#idemKey = null;
-    clearCheckout(this.h.productKey);
+    this.#clear();
   }
 
   #startPolling(): void {
@@ -466,12 +480,22 @@ export class Modal {
     this.#poller.start();
   }
 
-  /** The visible countdown each second; the screen reader's at most once a minute. */
+  /**
+   * The visible countdown each second; the screen reader's at most once a minute. A payment (a Lightning invoice) can
+   * run out before its checkout does: it is dropped then, and the buyer chooses how to pay again.
+   */
   #startCountdown(): void {
-    const ends = Date.parse(this.#payment?.expiresAt ?? this.#checkout!.expiresAt);
+    const checkout = this.#checkout!;
+    const ends = Date.parse(this.#payment?.expiresAt ?? checkout.expiresAt);
     let lastMinute = -1;
     const update = () => {
       const left = ends - Date.now();
+      if (left <= 0 && this.#payment && Date.parse(checkout.expiresAt) - Date.now() > 5000) {
+        this.#payment = null;
+        delete checkout.payment;
+        saveCheckout(this.h.api, this.h.productKey, checkout);
+        return this.#show('pay');
+      }
       const cd = this.#d.querySelector('.cd');
       if (!cd) return clearInterval(this.#tick);
       cd.textContent = this.#t('expiresIn', { time: formatCountdown(left) });
@@ -481,8 +505,8 @@ export class Modal {
         this.#d.querySelector('.sr')!.textContent = this.#t('minutesLeft', { n: minutes });
       }
     };
-    update();
     this.#tick = setInterval(update, 1000);
+    update(); // after the timer: it may show the step again, which replaces the timer
   }
 
   #onPaid(status: CheckoutStatus): void {

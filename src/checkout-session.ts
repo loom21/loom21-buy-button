@@ -10,28 +10,29 @@ export interface SavedCheckout {
   payment?: Payment;
 }
 
-const storageKey = (product: string) => 'l21:chk:' + product;
+/** Per storefront (the end of its key) and product: two stores on one site may use the same product slug. */
+const storageKey = (api: StorefrontApi, product: string) => `l21:chk:${api.key.slice(-8)}:${product}`;
 
-export function loadCheckout(product: string): SavedCheckout | null {
+export function loadCheckout(api: StorefrontApi, product: string): SavedCheckout | null {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey(product)) || 'null') as SavedCheckout | null;
+    const saved = JSON.parse(sessionStorage.getItem(storageKey(api, product)) || 'null') as SavedCheckout | null;
     return saved?.token ? saved : null;
   } catch {
     return null;
   }
 }
 
-export function saveCheckout(product: string, checkout: SavedCheckout): void {
+export function saveCheckout(api: StorefrontApi, product: string, checkout: SavedCheckout): void {
   try {
-    sessionStorage.setItem(storageKey(product), JSON.stringify(checkout));
+    sessionStorage.setItem(storageKey(api, product), JSON.stringify(checkout));
   } catch {
     // Private mode or storage off: the checkout just won't survive a reload.
   }
 }
 
-export function clearCheckout(product: string): void {
+export function clearCheckout(api: StorefrontApi, product: string): void {
   try {
-    sessionStorage.removeItem(storageKey(product));
+    sessionStorage.removeItem(storageKey(api, product));
   } catch {
     // As above.
   }
@@ -41,7 +42,8 @@ export const POLL_MS = 2000;
 
 /**
  * Polls GET /checkouts/{token} every 2 s until stopped. Pauses while the tab is hidden and polls at once when it's
- * shown again. Errors are skipped (the next poll tries again), except for the checkout's own end.
+ * shown again. Errors are skipped (the next poll tries again), except for the checkout's own end; after a 429 the next
+ * poll waits for its Retry-After (a minute at most).
  */
 export class Poller {
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -72,9 +74,9 @@ export class Poller {
     document.removeEventListener('visibilitychange', this.#onVisibility);
   }
 
-  #schedule(): void {
+  #schedule(ms = POLL_MS): void {
     clearTimeout(this.#timer);
-    if (this.#running && !document.hidden) this.#timer = setTimeout(() => void this.#tick(), POLL_MS);
+    if (this.#running && !document.hidden) this.#timer = setTimeout(() => void this.#tick(), ms);
   }
 
   async #tick(): Promise<void> {
@@ -86,6 +88,7 @@ export class Poller {
     } catch (e) {
       if (!this.#running) return;
       this.onError(e as ApiError);
+      return this.#schedule(Math.max(POLL_MS, Math.min((e as ApiError).retryAfter ?? 0, 60) * 1000));
     }
     this.#schedule();
   }
