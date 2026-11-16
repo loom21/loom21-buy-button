@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { readFileSync } from 'node:fs';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-const banner = { js: `/*! @loom21/buy-button v${version} | MIT | https://github.com/bitcoinfixesalot/loom21-buy-button */` };
+const banner = { js: `/*! @loom21/buy-button v${version} | MIT | https://github.com/loom21/loom21-buy-button */` };
 const common = { bundle: true, target: 'es2022', legalComments: 'none', banner, define: { __VERSION__: JSON.stringify(version) } };
 
 await build({

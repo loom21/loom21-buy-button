@@ -103,7 +103,7 @@ Closing the checkout while a payment is open asks whether to cancel the order (w
 
 - **npm:** `npm install @loom21/buy-button`, then `import '@loom21/buy-button'` in your bundle. It defines `<loom21-buy-button>`.
 - **jsDelivr:** `https://cdn.jsdelivr.net/npm/@loom21/buy-button@1/dist/buy-button.js`.
-- **Your own server:** copy `dist/buy-button.js` from a [release](https://github.com/bitcoinfixesalot/loom21-buy-button/releases).
+- **Your own server:** copy `dist/buy-button.js` from a [release](https://github.com/loom21/loom21-buy-button/releases).
 
 To pin an exact version with Subresource Integrity, use the release's `buy-button.js.sri`:
 

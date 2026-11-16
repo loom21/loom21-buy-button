@@ -22,9 +22,9 @@
   "sideEffects": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bitcoinfixesalot/loom21-buy-button.git"
+    "url": "git+https://github.com/loom21/loom21-buy-button.git"
   },
-  "homepage": "https://github.com/bitcoinfixesalot/loom21-buy-button#readme",
+  "homepage": "https://github.com/loom21/loom21-buy-button#readme",
   "keywords": [
     "loom21",
     "bitcoin",
