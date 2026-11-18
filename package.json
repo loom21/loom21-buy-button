@@ -1,6 +1,6 @@
 {
   "name": "@loom21/buy-button",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "One line of HTML that sells a Loom21 product on any website: Lightning, on-chain Bitcoin and card checkout on the public Storefront API.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,7 @@
     "type": "git",
     "url": "git+https://github.com/loom21/loom21-buy-button.git"
   },
-   "publishConfig": {
+  "publishConfig": {
     "access": "public"
   },
   "homepage": "https://github.com/loom21/loom21-buy-button#readme",
