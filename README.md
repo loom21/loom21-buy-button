@@ -24,7 +24,7 @@ One line of HTML that sells a [Loom21](https://loom21.com) product on any websit
 3. In the storefront's **Developer** tab, add your website (e.g. `https://shop.example.com`) to **Allowed websites** and copy the publishable key.
 4. Paste the snippet above into your page with your key and product slug.
 
-The Embed dialog in Loom21 (a product's **Embed** button) builds the snippet for you, with a live preview.
+Loom21 builds the snippet for you, with a live preview: **Buy button for your website** on the product's **Storefront** tab, or **Generate a Buy button** on the storefront's **Developer** tab.
 
 ## Attributes
 
@@ -141,6 +141,21 @@ http://localhost:5173/demo/real.html?key=l21_pk_live_…&product=raw-honey-500g&
 ```
 
 The QR code encoder is our own (`src/qr.ts`), to stay within the size budget. Its tests decode every version with an independent reader (jsQR).
+
+### Releasing
+
+1. Set the version in `package.json`, commit it to `main` and wait for CI to pass.
+2. Tag it and push the tag:
+
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+   The Release workflow refuses a tag that isn't `package.json`'s version. It tests the build, publishes `@loom21/buy-button` to npm with provenance, and makes a GitHub release with `buy-button.js`, its map, `buy-button.js.sri` and a zip of `dist/`. It needs the `NPM_TOKEN` secret, an npm token that can publish to the `@loom21` scope.
+3. npm never accepts the same version twice, even after an unpublish, so fix a bad release with the next version.
+
+Loom21 serves its own copy of each release at `https://app.loom21.com/embed/buy-button/v{version}/`. Those files are copied from the GitHub release into the Loom21 app and deployed with it.
 
 Storefront API reference: [OpenAPI](https://app.loom21.com/storefront/v1/openapi.json).
 
