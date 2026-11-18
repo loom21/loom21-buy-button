@@ -31,8 +31,6 @@ jobs:
       - name: SRI hash
         run: echo "sha384-$(openssl dgst -sha384 -binary dist/buy-button.js | openssl base64 -A)" > dist/buy-button.js.sri
       - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release
         run: |
           (cd dist && zip -r ../buy-button-dist.zip .)
